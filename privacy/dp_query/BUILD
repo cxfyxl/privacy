@@ -5,6 +5,10 @@ licenses(["notice"])  # Apache 2.0
 py_library(
     name = "dp_query",
     srcs = ["dp_query.py"],
+    deps = [
+        "//third_party/py/distutils",
+        "//third_party/py/tensorflow",
+    ],
 )
 
 py_library(
@@ -13,17 +17,21 @@ py_library(
     deps = [
         ":dp_query",
         ":normalized_query",
+        "//third_party/py/distutils",
         "//third_party/py/tensorflow",
     ],
 )
 
 py_test(
     name = "gaussian_query_test",
+    size = "small",
     srcs = ["gaussian_query_test.py"],
     deps = [
         ":gaussian_query",
         ":test_utils",
         "//third_party/py/absl/testing:parameterized",
+        "//third_party/py/numpy",
+        "//third_party/py/six",
         "//third_party/py/tensorflow",
     ],
 )
@@ -33,12 +41,14 @@ py_library(
     srcs = ["no_privacy_query.py"],
     deps = [
         ":dp_query",
+        "//third_party/py/distutils",
         "//third_party/py/tensorflow",
     ],
 )
 
 py_test(
     name = "no_privacy_query_test",
+    size = "small",
     srcs = ["no_privacy_query_test.py"],
     deps = [
         ":no_privacy_query",
@@ -53,12 +63,14 @@ py_library(
     srcs = ["normalized_query.py"],
     deps = [
         ":dp_query",
+        "//third_party/py/distutils",
         "//third_party/py/tensorflow",
     ],
 )
 
 py_test(
     name = "normalized_query_test",
+    size = "small",
     srcs = ["normalized_query_test.py"],
     deps = [
         ":gaussian_query",
@@ -73,19 +85,46 @@ py_library(
     srcs = ["nested_query.py"],
     deps = [
         ":dp_query",
+        "//third_party/py/distutils",
         "//third_party/py/tensorflow",
     ],
 )
 
 py_test(
     name = "nested_query_test",
+    size = "small",
     srcs = ["nested_query_test.py"],
     deps = [
         ":gaussian_query",
         ":nested_query",
         ":test_utils",
         "//third_party/py/absl/testing:parameterized",
+        "//third_party/py/distutils",
+        "//third_party/py/numpy",
         "//third_party/py/tensorflow",
+    ],
+)
+
+py_library(
+    name = "quantile_adaptive_clip_sum_query",
+    srcs = ["quantile_adaptive_clip_sum_query.py"],
+    deps = [
+        ":dp_query",
+        ":gaussian_query",
+        ":normalized_query",
+        "//third_party/py/tensorflow",
+    ],
+)
+
+py_test(
+    name = "quantile_adaptive_clip_sum_query_test",
+    srcs = ["quantile_adaptive_clip_sum_query_test.py"],
+    deps = [
+        ":quantile_adaptive_clip_sum_query",
+        ":test_utils",
+        "//third_party/py/numpy",
+        "//third_party/py/tensorflow",
+        "//third_party/py/tensorflow_privacy/privacy/analysis:privacy_ledger",
     ],
 )
 
