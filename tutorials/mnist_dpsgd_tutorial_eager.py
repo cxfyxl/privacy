@@ -16,34 +16,36 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from absl import app
+from absl import flags
+
+from distutils.version import LooseVersion
+
 import numpy as np
 import tensorflow as tf
 
 from privacy.analysis.rdp_accountant import compute_rdp
 from privacy.analysis.rdp_accountant import get_privacy_spent
-from privacy.dp_query.gaussian_query import GaussianAverageQuery
-from privacy.optimizers.dp_optimizer import DPGradientDescentOptimizer
+from privacy.optimizers.dp_optimizer import DPGradientDescentGaussianOptimizer
 
-# Compatibility with tf 1 and 2 APIs
-try:
+if LooseVersion(tf.__version__) < LooseVersion('2.0.0'):
   GradientDescentOptimizer = tf.train.GradientDescentOptimizer
-except:  # pylint: disable=bare-except
+  tf.enable_eager_execution()
+else:
   GradientDescentOptimizer = tf.optimizers.SGD  # pylint: disable=invalid-name
 
-tf.enable_eager_execution()
+flags.DEFINE_boolean('dpsgd', True, 'If True, train with DP-SGD. If False, '
+                     'train with vanilla SGD.')
+flags.DEFINE_float('learning_rate', 0.15, 'Learning rate for training')
+flags.DEFINE_float('noise_multiplier', 1.1,
+                   'Ratio of the standard deviation to the clipping norm')
+flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
+flags.DEFINE_integer('batch_size', 250, 'Batch size')
+flags.DEFINE_integer('epochs', 1, 'Number of epochs')
+flags.DEFINE_integer('microbatches', 250, 'Number of microbatches '
+                     '(must evenly divide batch_size)')
 
-tf.flags.DEFINE_boolean('dpsgd', True, 'If True, train with DP-SGD. If False, '
-                        'train with vanilla SGD.')
-tf.flags.DEFINE_float('learning_rate', 0.15, 'Learning rate for training')
-tf.flags.DEFINE_float('noise_multiplier', 1.1,
-                      'Ratio of the standard deviation to the clipping norm')
-tf.flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
-tf.flags.DEFINE_integer('batch_size', 250, 'Batch size')
-tf.flags.DEFINE_integer('epochs', 60, 'Number of epochs')
-tf.flags.DEFINE_integer('microbatches', 250, 'Number of microbatches '
-                        '(must evenly divide batch_size)')
-
-FLAGS = tf.app.flags.FLAGS
+FLAGS = flags.FLAGS
 
 
 def compute_epsilon(steps):
@@ -61,46 +63,53 @@ def compute_epsilon(steps):
 
 
 def main(_):
+  if FLAGS.dpsgd and FLAGS.batch_size % FLAGS.microbatches != 0:
+    raise ValueError('Number of microbatches should divide evenly batch_size')
+
   # Fetch the mnist data
   train, test = tf.keras.datasets.mnist.load_data()
   train_images, train_labels = train
   test_images, test_labels = test
-
+  print(1)
   # Create a dataset object and batch for the training data
   dataset = tf.data.Dataset.from_tensor_slices(
       (tf.cast(train_images[..., tf.newaxis]/255, tf.float32),
        tf.cast(train_labels, tf.int64)))
   dataset = dataset.shuffle(1000).batch(FLAGS.batch_size)
-
+  print(2)
   # Create a dataset object and batch for the test data
   eval_dataset = tf.data.Dataset.from_tensor_slices(
       (tf.cast(test_images[..., tf.newaxis]/255, tf.float32),
        tf.cast(test_labels, tf.int64)))
   eval_dataset = eval_dataset.batch(10000)
-
+  print(3)
   # Define the model using tf.keras.layers
   mnist_model = tf.keras.Sequential([
-      tf.keras.layers.Conv2D(16, 8,
-                             strides=2,
-                             padding='same',
-                             activation='relu'),
-      tf.keras.layers.MaxPool2D(2, 1),
-      tf.keras.layers.Conv2D(32, 4, strides=2, activation='relu'),
-      tf.keras.layers.MaxPool2D(2, 1),
+      tf.keras.layers.Conv2D(filters= 32, kernel_size=(5,5), padding='Same', activation=tf.nn.relu,input_shape=(28,28,1)), #32个卷积核
+      tf.keras.layers.Conv2D(filters= 32, kernel_size=(5,5), padding='Same'),
+      tf.keras.layers.MaxPool2D(pool_size=(2,2)),
       tf.keras.layers.Flatten(),
-      tf.keras.layers.Dense(32, activation='relu'),
+      tf.keras.layers.Dense(256, activation=tf.nn.relu),
+      tf.keras.layers.Dropout(0.25),
       tf.keras.layers.Dense(10)
+      # tf.keras.layers.Conv2D(16, 8,
+                             # strides=2,
+                             # padding='same',
+                             # activation='relu'),
+      # tf.keras.layers.MaxPool2D(2, 1),
+      # tf.keras.layers.Conv2D(32, 4, strides=2, activation='relu'),
+      # tf.keras.layers.MaxPool2D(2, 1),
+      # tf.keras.layers.Flatten(),
+      # tf.keras.layers.Dense(32, activation='relu'),
+      # tf.keras.layers.Dense(10)
   ])
 
   # Instantiate the optimizer
   if FLAGS.dpsgd:
-    dp_average_query = GaussianAverageQuery(
-        FLAGS.l2_norm_clip,
-        FLAGS.l2_norm_clip * FLAGS.noise_multiplier,
-        FLAGS.microbatches)
-    opt = DPGradientDescentOptimizer(
-        dp_average_query,
-        FLAGS.microbatches,
+    opt = DPGradientDescentGaussianOptimizer(
+        l2_norm_clip=FLAGS.l2_norm_clip,
+        noise_multiplier=FLAGS.noise_multiplier,
+        num_microbatches=FLAGS.microbatches,
         learning_rate=FLAGS.learning_rate)
   else:
     opt = GradientDescentOptimizer(learning_rate=FLAGS.learning_rate)
@@ -118,8 +127,8 @@ def main(_):
         # In Eager mode, the optimizer takes a function that returns the loss.
         def loss_fn():
           logits = mnist_model(images, training=True)  # pylint: disable=undefined-loop-variable,cell-var-from-loop
-          loss = tf.losses.sparse_softmax_cross_entropy(
-              labels, logits, reduction=tf.losses.Reduction.NONE)  # pylint: disable=undefined-loop-variable,cell-var-from-loop
+          loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+              labels=labels, logits=logits)  # pylint: disable=undefined-loop-variable,cell-var-from-loop
           # If training without privacy, the loss is a scalar not a vector.
           if not FLAGS.dpsgd:
             loss = tf.reduce_mean(loss)
@@ -131,8 +140,7 @@ def main(_):
         else:
           grads_and_vars = opt.compute_gradients(loss_fn, var_list)
 
-      global_step = tf.train.get_or_create_global_step()
-      opt.apply_gradients(grads_and_vars, global_step=global_step)
+      opt.apply_gradients(grads_and_vars)
 
     # Evaluate the model and print results
     for (_, (images, labels)) in enumerate(eval_dataset.take(-1)):
@@ -143,10 +151,10 @@ def main(_):
 
     # Compute the privacy budget expended so far.
     if FLAGS.dpsgd:
-      eps = compute_epsilon(epoch * steps_per_epoch)
+      eps = compute_epsilon((epoch + 1) * steps_per_epoch)
       print('For delta=1e-5, the current epsilon is: %.2f' % eps)
     else:
       print('Trained with vanilla non-private SGD optimizer')
 
 if __name__ == '__main__':
-  tf.app.run(main)
+  app.run(main)
